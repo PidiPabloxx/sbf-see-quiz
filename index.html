@@ -375,6 +375,141 @@
             margin-left: 10px;
             vertical-align: middle;
         }
+
+        /* --- Sync UI --- */
+        .sync-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 15px;
+            padding: 10px 14px;
+            background: #f0f4f8;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+        .sync-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #cbd5e0;
+            flex-shrink: 0;
+        }
+        .sync-dot.ok { background: #48bb78; }
+        .sync-dot.err { background: #e53e3e; }
+        .sync-dot.syncing {
+            background: #4299e1;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .sync-text {
+            flex: 1;
+            color: #4a5568;
+        }
+        .sync-btn {
+            background: #2c5282;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .sync-btn:hover { background: #1a365d; }
+        .sync-btn.secondary {
+            background: #e2e8f0;
+            color: #2d3748;
+        }
+        .sync-btn.secondary:hover { background: #cbd5e0; }
+
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .modal-backdrop.open { display: flex; }
+        .modal {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 500px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .modal h2 {
+            color: #1a365d;
+            margin-bottom: 8px;
+            font-size: 22px;
+        }
+        .modal .modal-subtitle {
+            color: #718096;
+            font-size: 13px;
+            margin-bottom: 20px;
+        }
+        .modal label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 6px;
+            margin-top: 14px;
+        }
+        .modal input[type="text"],
+        .modal input[type="password"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #cbd5e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: monospace;
+        }
+        .modal input:focus {
+            outline: none;
+            border-color: #2c5282;
+        }
+        .modal .hint {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 4px;
+        }
+        .modal .modal-status {
+            margin-top: 14px;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            display: none;
+        }
+        .modal .modal-status.ok {
+            display: block;
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        .modal .modal-status.err {
+            display: block;
+            background: #fed7d7;
+            color: #742a2a;
+        }
+        .modal .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        .modal .modal-actions button {
+            flex: 1;
+            min-width: 100px;
+            padding: 10px 16px;
+        }
     </style>
 </head>
 <body>
@@ -425,6 +560,12 @@
                     <button class="clear-btn" onclick="clearWrongMemory()">Zurücksetzen</button>
                 </div>
                 <button class="fehlerquiz-btn" id="fehlerquiz-btn" onclick="startFehlerquiz()" disabled style="margin-top: 10px;">Fehlerquiz starten</button>
+
+                <div class="sync-bar">
+                    <div class="sync-dot" id="sync-dot"></div>
+                    <div class="sync-text" id="sync-text">Sync nicht eingerichtet</div>
+                    <button class="sync-btn secondary" onclick="openSyncModal()">Einstellungen</button>
+                </div>
             </div>
 
             <!-- Quiz Screen -->
@@ -4258,6 +4399,7 @@
             const memory = getWrongMemory();
             memory[String(questionNumber)] = 0;
             saveWrongMemory(memory);
+            if (typeof scheduleSync === 'function') scheduleSync();
         }
 
         function recordCorrectInWrongMemory(questionNumber) {
@@ -4269,6 +4411,7 @@
                 delete memory[key];
             }
             saveWrongMemory(memory);
+            if (typeof scheduleSync === 'function') scheduleSync();
         }
 
         function resetStreakInWrongMemory(questionNumber) {
@@ -4277,6 +4420,7 @@
             if (key in memory) {
                 memory[key] = 0;
                 saveWrongMemory(memory);
+                if (typeof scheduleSync === 'function') scheduleSync();
             }
         }
 
@@ -4284,6 +4428,7 @@
             if (confirm('Alle gespeicherten Fehler löschen?')) {
                 localStorage.removeItem(STORAGE_KEY);
                 updateWrongMemoryUI();
+                if (typeof scheduleSync === 'function') scheduleSync();
             }
         }
 
@@ -4558,6 +4703,293 @@
             document.getElementById('start-screen').classList.remove('hidden');
             updateWrongMemoryUI();
         }
+
+        // ============================================
+        // GITHUB GIST SYNC (cross-device wrong-answer memory)
+        // ============================================
+
+        const SYNC_TOKEN_KEY = 'sbf-sync-token';
+        const SYNC_GIST_ID_KEY = 'sbf-sync-gist-id';
+        const SYNC_LAST_KEY = 'sbf-sync-last';
+        const GIST_FILENAME = 'sbf-wrong-questions.json';
+        const GIST_DESCRIPTION = 'SBF Quiz — Wrong Answers Memory (sync)';
+
+        let syncDebounceTimer = null;
+        let syncInFlight = false;
+
+        function getSyncToken() {
+            return localStorage.getItem(SYNC_TOKEN_KEY) || '';
+        }
+        function getSyncGistId() {
+            return localStorage.getItem(SYNC_GIST_ID_KEY) || '';
+        }
+        function isSyncConfigured() {
+            return !!getSyncToken();
+        }
+
+        function githubHeaders(token) {
+            return {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
+                'Content-Type': 'application/json'
+            };
+        }
+
+        async function createGist(token, initialContent) {
+            const res = await fetch('https://api.github.com/gists', {
+                method: 'POST',
+                headers: githubHeaders(token),
+                body: JSON.stringify({
+                    description: GIST_DESCRIPTION,
+                    public: false,
+                    files: {
+                        [GIST_FILENAME]: { content: JSON.stringify(initialContent) }
+                    }
+                })
+            });
+            if (!res.ok) throw new Error(`Create failed: ${res.status} ${res.statusText}`);
+            const data = await res.json();
+            return data.id;
+        }
+
+        async function fetchGist(token, gistId) {
+            const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+                method: 'GET',
+                headers: githubHeaders(token)
+            });
+            if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+            const data = await res.json();
+            const file = data.files && data.files[GIST_FILENAME];
+            if (!file || typeof file.content !== 'string') return {};
+            try {
+                return JSON.parse(file.content) || {};
+            } catch {
+                return {};
+            }
+        }
+
+        async function patchGist(token, gistId, content) {
+            const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+                method: 'PATCH',
+                headers: githubHeaders(token),
+                body: JSON.stringify({
+                    files: {
+                        [GIST_FILENAME]: { content: JSON.stringify(content) }
+                    }
+                })
+            });
+            if (!res.ok) throw new Error(`Push failed: ${res.status} ${res.statusText}`);
+        }
+
+        // Merge: UNION of keys, MIN of streaks (safer = more re-drilling)
+        function mergeMemories(local, remote) {
+            const merged = { ...local };
+            for (const k in remote) {
+                if (k in merged) {
+                    merged[k] = Math.min(merged[k], remote[k]);
+                } else {
+                    merged[k] = remote[k];
+                }
+            }
+            return merged;
+        }
+
+        async function pullAndMerge() {
+            if (!isSyncConfigured()) return;
+            const token = getSyncToken();
+            let gistId = getSyncGistId();
+            try {
+                setSyncStatus('syncing', 'Sync läuft…');
+                if (!gistId) {
+                    // First run: create gist with current local state
+                    gistId = await createGist(token, getWrongMemory());
+                    localStorage.setItem(SYNC_GIST_ID_KEY, gistId);
+                } else {
+                    const remote = await fetchGist(token, gistId);
+                    const local = getWrongMemory();
+                    const merged = mergeMemories(local, remote);
+                    saveWrongMemory(merged);
+                    // If merge changed anything vs remote, push back
+                    if (JSON.stringify(merged) !== JSON.stringify(remote)) {
+                        await patchGist(token, gistId, merged);
+                    }
+                }
+                localStorage.setItem(SYNC_LAST_KEY, new Date().toISOString());
+                setSyncStatus('ok', `Synchronisiert ${formatSyncTime()}`);
+                updateWrongMemoryUI();
+            } catch (err) {
+                console.error('Sync pull failed:', err);
+                setSyncStatus('err', 'Sync-Fehler: ' + err.message);
+            }
+        }
+
+        function scheduleSync() {
+            if (!isSyncConfigured()) return;
+            if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+            setSyncStatus('syncing', 'Änderung erkannt…');
+            syncDebounceTimer = setTimeout(pushNow, 2000);
+        }
+
+        async function pushNow() {
+            if (!isSyncConfigured() || syncInFlight) return;
+            syncInFlight = true;
+            const token = getSyncToken();
+            let gistId = getSyncGistId();
+            try {
+                setSyncStatus('syncing', 'Sync läuft…');
+                if (!gistId) {
+                    gistId = await createGist(token, getWrongMemory());
+                    localStorage.setItem(SYNC_GIST_ID_KEY, gistId);
+                } else {
+                    await patchGist(token, gistId, getWrongMemory());
+                }
+                localStorage.setItem(SYNC_LAST_KEY, new Date().toISOString());
+                setSyncStatus('ok', `Synchronisiert ${formatSyncTime()}`);
+            } catch (err) {
+                console.error('Sync push failed:', err);
+                setSyncStatus('err', 'Sync-Fehler: ' + err.message);
+            } finally {
+                syncInFlight = false;
+            }
+        }
+
+        function formatSyncTime() {
+            const iso = localStorage.getItem(SYNC_LAST_KEY);
+            if (!iso) return '';
+            const d = new Date(iso);
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            return `${hh}:${mm}`;
+        }
+
+        function setSyncStatus(state, text) {
+            const dot = document.getElementById('sync-dot');
+            const txt = document.getElementById('sync-text');
+            if (!dot || !txt) return;
+            dot.classList.remove('ok', 'err', 'syncing');
+            if (state) dot.classList.add(state);
+            txt.textContent = text;
+        }
+
+        function refreshSyncStatusIdle() {
+            if (!isSyncConfigured()) {
+                setSyncStatus('', 'Sync nicht eingerichtet');
+            } else {
+                const last = localStorage.getItem(SYNC_LAST_KEY);
+                if (last) setSyncStatus('ok', `Synchronisiert ${formatSyncTime()}`);
+                else setSyncStatus('', 'Bereit');
+            }
+        }
+
+        // --- Sync modal ---
+
+        function openSyncModal() {
+            document.getElementById('sync-modal').classList.add('open');
+            document.getElementById('sync-modal-token').value = getSyncToken();
+            document.getElementById('sync-modal-gistid').value = getSyncGistId();
+            document.getElementById('sync-modal-status').className = 'modal-status';
+            document.getElementById('sync-modal-status').textContent = '';
+        }
+
+        function closeSyncModal() {
+            document.getElementById('sync-modal').classList.remove('open');
+        }
+
+        async function testSyncConnection() {
+            const token = document.getElementById('sync-modal-token').value.trim();
+            const statusEl = document.getElementById('sync-modal-status');
+            if (!token) {
+                statusEl.className = 'modal-status err';
+                statusEl.textContent = 'Bitte Token eingeben.';
+                return;
+            }
+            statusEl.className = 'modal-status';
+            statusEl.textContent = 'Teste Verbindung…';
+            try {
+                const res = await fetch('https://api.github.com/user', {
+                    headers: githubHeaders(token)
+                });
+                if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                const user = await res.json();
+                statusEl.className = 'modal-status ok';
+                statusEl.textContent = `✓ Verbunden als ${user.login}`;
+            } catch (err) {
+                statusEl.className = 'modal-status err';
+                statusEl.textContent = '✗ ' + err.message;
+            }
+        }
+
+        async function saveSyncSettings() {
+            const token = document.getElementById('sync-modal-token').value.trim();
+            const gistId = document.getElementById('sync-modal-gistid').value.trim();
+            const statusEl = document.getElementById('sync-modal-status');
+            if (!token) {
+                statusEl.className = 'modal-status err';
+                statusEl.textContent = 'Token ist erforderlich.';
+                return;
+            }
+            localStorage.setItem(SYNC_TOKEN_KEY, token);
+            if (gistId) {
+                localStorage.setItem(SYNC_GIST_ID_KEY, gistId);
+            }
+            statusEl.className = 'modal-status ok';
+            statusEl.textContent = 'Gespeichert. Starte Sync…';
+            await pullAndMerge();
+            setTimeout(closeSyncModal, 800);
+        }
+
+        function disableSync() {
+            if (!confirm('Sync deaktivieren? Token und Gist-ID werden lokal gelöscht. Das Gist bei GitHub bleibt bestehen.')) return;
+            localStorage.removeItem(SYNC_TOKEN_KEY);
+            localStorage.removeItem(SYNC_GIST_ID_KEY);
+            localStorage.removeItem(SYNC_LAST_KEY);
+            refreshSyncStatusIdle();
+            closeSyncModal();
+        }
+
+        // Pull on load (async, non-blocking)
+        window.addEventListener('load', () => {
+            refreshSyncStatusIdle();
+            if (isSyncConfigured()) {
+                pullAndMerge();
+            }
+        });
+
+        // Push any pending changes before page hides
+        window.addEventListener('beforeunload', () => {
+            if (syncDebounceTimer) {
+                clearTimeout(syncDebounceTimer);
+                pushNow();
+            }
+        });
     </script>
+
+    <!-- Sync settings modal -->
+    <div class="modal-backdrop" id="sync-modal">
+        <div class="modal">
+            <h2>Cross-Device Sync</h2>
+            <div class="modal-subtitle">Synchronisiere deine gespeicherten Fehler zwischen Geräten über einen privaten GitHub Gist.</div>
+
+            <label for="sync-modal-token">GitHub Personal Access Token</label>
+            <input type="password" id="sync-modal-token" placeholder="ghp_…" autocomplete="off">
+            <div class="hint">Scope: <code>gist</code>. Erstellen auf github.com/settings/tokens</div>
+
+            <label for="sync-modal-gistid">Gist ID (optional)</label>
+            <input type="text" id="sync-modal-gistid" placeholder="Wird automatisch erstellt">
+            <div class="hint">Leer lassen für automatische Erstellung beim ersten Sync.</div>
+
+            <div class="modal-status" id="sync-modal-status"></div>
+
+            <div class="modal-actions">
+                <button class="sync-btn secondary" onclick="testSyncConnection()">Test</button>
+                <button class="sync-btn" onclick="saveSyncSettings()">Speichern &amp; Sync</button>
+            </div>
+            <div class="modal-actions">
+                <button class="sync-btn secondary" onclick="closeSyncModal()">Abbrechen</button>
+                <button class="sync-btn secondary" onclick="disableSync()" style="color:#c53030;">Sync deaktivieren</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
