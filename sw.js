@@ -1,5 +1,5 @@
 // Service Worker for SBF See Quiz PWA
-const CACHE_NAME = 'sbf-quiz-v2-sync';
+const CACHE_NAME = 'sbf-quiz-v3-images';
 const urlsToCache = [
   './',
   './index.html',
