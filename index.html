@@ -4639,7 +4639,7 @@
         const COVERAGE_KEY = 'sbf-coverage-v1';
         const MASTERED_STREAK = 3;
 
-        // Format: { "questionNumber": { seen: true, correctStreak: N } }
+        // Format: { "questionNumber": { seen: true, correctStreak: N, timesSeen: N, timesCorrect: N, timesWrong: N } }
         function getCoverage() {
             try {
                 return JSON.parse(localStorage.getItem(COVERAGE_KEY) || '{}');
@@ -4675,13 +4675,16 @@
             const coverage = getCoverage();
             const key = String(questionNumber);
             if (!coverage[key]) {
-                coverage[key] = { seen: true, correctStreak: 0 };
+                coverage[key] = { seen: true, correctStreak: 0, timesSeen: 0, timesCorrect: 0, timesWrong: 0 };
             }
             coverage[key].seen = true;
+            coverage[key].timesSeen = (coverage[key].timesSeen || 0) + 1;
             if (wasCorrect) {
                 coverage[key].correctStreak = (coverage[key].correctStreak || 0) + 1;
+                coverage[key].timesCorrect = (coverage[key].timesCorrect || 0) + 1;
             } else {
                 coverage[key].correctStreak = 0;
+                coverage[key].timesWrong = (coverage[key].timesWrong || 0) + 1;
             }
             saveCoverage(coverage);
             if (typeof scheduleSync === 'function') scheduleSync();
@@ -4830,12 +4833,18 @@
         let isFehlerquiz = false;
 
         // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             migrateCoverageFromWrongMemory();
             updateStats();
             populateCategories();
             updateWrongMemoryUI();
             updateCoverageUI();
+            // Auto-sync from gist on load so unseen counts are accurate across devices
+            if (typeof pullAndMerge === 'function') {
+                await pullAndMerge();
+                updateCoverageUI();
+                updateWrongMemoryUI();
+            }
         });
 
         function updateStats() {
@@ -4963,6 +4972,10 @@
             // Track coverage
             recordSeen(question.number, isCorrect);
 
+            // Build per-question stats line
+            const cov = getCoverage()[String(question.number)] || {};
+            const statsLine = ` (${cov.timesSeen || 0}x gesehen · ${cov.timesCorrect || 0}✓ · ${cov.timesWrong || 0}✗)`;
+
             if (isCorrect) {
                 btn.classList.add('correct');
                 correctAnswers++;
@@ -4972,17 +4985,17 @@
                     const memory = getWrongMemory();
                     const streak = memory[String(question.number)];
                     if (streak === undefined) {
-                        feedback.textContent = '✓ Richtig! 3/3 — Frage gelernt!';
+                        feedback.textContent = '✓ Richtig! 3/3 — Frage gelernt!' + statsLine;
                     } else {
-                        feedback.textContent = `✓ Richtig! ${streak}/${STREAK_TARGET} — noch ${STREAK_TARGET - streak}x richtig zum Entfernen.`;
+                        feedback.textContent = `✓ Richtig! ${streak}/${STREAK_TARGET} — noch ${STREAK_TARGET - streak}x richtig zum Entfernen.` + statsLine;
                     }
                 } else {
-                    feedback.textContent = '✓ Richtig! Gut gemacht.';
+                    feedback.textContent = '✓ Richtig!' + statsLine;
                 }
             } else {
                 btn.classList.add('incorrect');
                 feedback.className = 'feedback incorrect';
-                feedback.textContent = '✗ Leider falsch. Die richtige Antwort ist grün markiert.';
+                feedback.textContent = '✗ Leider falsch. Die richtige Antwort ist grün markiert.' + statsLine;
                 wrongAnswersList.push({
                     number: question.number,
                     question: question.question,
@@ -5161,7 +5174,10 @@
                 if (k in merged) {
                     merged[k] = {
                         seen: true,
-                        correctStreak: Math.max(merged[k].correctStreak || 0, remote[k].correctStreak || 0)
+                        correctStreak: Math.max(merged[k].correctStreak || 0, remote[k].correctStreak || 0),
+                        timesSeen: Math.max(merged[k].timesSeen || 0, remote[k].timesSeen || 0),
+                        timesCorrect: Math.max(merged[k].timesCorrect || 0, remote[k].timesCorrect || 0),
+                        timesWrong: Math.max(merged[k].timesWrong || 0, remote[k].timesWrong || 0)
                     };
                 } else {
                     merged[k] = remote[k];
