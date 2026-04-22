@@ -1,5 +1,5 @@
 // Service Worker for SBF See Quiz PWA
-const CACHE_NAME = 'sbf-quiz-v8-full-elwis-audit';
+const CACHE_NAME = 'sbf-quiz-v9-audit-v2-verified';
 const urlsToCache = [
   './',
   './index.html',
