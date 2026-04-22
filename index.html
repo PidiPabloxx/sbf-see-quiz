@@ -4584,6 +4584,7 @@
                 coverage[key].correctStreak = 0;
             }
             saveCoverage(coverage);
+            if (typeof scheduleSync === 'function') scheduleSync();
         }
 
         function getUnseenQuestions() {
@@ -4671,6 +4672,7 @@
         function clearCoverage() {
             if (confirm('Gesamten Lernfortschritt löschen? (Gesehen + Gelernt)')) {
                 localStorage.removeItem(COVERAGE_KEY);
+                if (typeof scheduleSync === 'function') scheduleSync();
                 updateCoverageUI();
             }
         }
@@ -4957,6 +4959,7 @@
         const SYNC_GIST_ID_KEY = 'sbf-sync-gist-id';
         const SYNC_LAST_KEY = 'sbf-sync-last';
         const GIST_FILENAME = 'sbf-wrong-questions.json';
+        const GIST_COVERAGE_FILENAME = 'sbf-coverage.json';
         const GIST_DESCRIPTION = 'SBF Quiz — Wrong Answers Memory (sync)';
 
         let syncDebounceTimer = null;
@@ -4981,7 +4984,7 @@
             };
         }
 
-        async function createGist(token, initialContent) {
+        async function createGist(token, wrongMemory, coverage) {
             const res = await fetch('https://api.github.com/gists', {
                 method: 'POST',
                 headers: githubHeaders(token),
@@ -4989,7 +4992,8 @@
                     description: GIST_DESCRIPTION,
                     public: false,
                     files: {
-                        [GIST_FILENAME]: { content: JSON.stringify(initialContent) }
+                        [GIST_FILENAME]: { content: JSON.stringify(wrongMemory) },
+                        [GIST_COVERAGE_FILENAME]: { content: JSON.stringify(coverage) }
                     }
                 })
             });
@@ -5005,22 +5009,23 @@
             });
             if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
             const data = await res.json();
-            const file = data.files && data.files[GIST_FILENAME];
-            if (!file || typeof file.content !== 'string') return {};
-            try {
-                return JSON.parse(file.content) || {};
-            } catch {
-                return {};
-            }
+            const wrongFile = data.files && data.files[GIST_FILENAME];
+            const coverageFile = data.files && data.files[GIST_COVERAGE_FILENAME];
+            let wrongMemory = {};
+            let coverage = {};
+            try { wrongMemory = JSON.parse(wrongFile.content) || {}; } catch {}
+            try { coverage = JSON.parse(coverageFile.content) || {}; } catch {}
+            return { wrongMemory, coverage };
         }
 
-        async function patchGist(token, gistId, content) {
+        async function patchGist(token, gistId, wrongMemory, coverage) {
             const res = await fetch(`https://api.github.com/gists/${gistId}`, {
                 method: 'PATCH',
                 headers: githubHeaders(token),
                 body: JSON.stringify({
                     files: {
-                        [GIST_FILENAME]: { content: JSON.stringify(content) }
+                        [GIST_FILENAME]: { content: JSON.stringify(wrongMemory) },
+                        [GIST_COVERAGE_FILENAME]: { content: JSON.stringify(coverage) }
                     }
                 })
             });
@@ -5040,6 +5045,21 @@
             return merged;
         }
 
+        function mergeCoverage(local, remote) {
+            const merged = { ...local };
+            for (const k in remote) {
+                if (k in merged) {
+                    merged[k] = {
+                        seen: true,
+                        correctStreak: Math.max(merged[k].correctStreak || 0, remote[k].correctStreak || 0)
+                    };
+                } else {
+                    merged[k] = remote[k];
+                }
+            }
+            return merged;
+        }
+
         async function pullAndMerge() {
             if (!isSyncConfigured()) return;
             const token = getSyncToken();
@@ -5047,22 +5067,25 @@
             try {
                 setSyncStatus('syncing', 'Sync läuft…');
                 if (!gistId) {
-                    // First run: create gist with current local state
-                    gistId = await createGist(token, getWrongMemory());
+                    gistId = await createGist(token, getWrongMemory(), getCoverage());
                     localStorage.setItem(SYNC_GIST_ID_KEY, gistId);
                 } else {
                     const remote = await fetchGist(token, gistId);
-                    const local = getWrongMemory();
-                    const merged = mergeMemories(local, remote);
-                    saveWrongMemory(merged);
-                    // If merge changed anything vs remote, push back
-                    if (JSON.stringify(merged) !== JSON.stringify(remote)) {
-                        await patchGist(token, gistId, merged);
+                    const localWrong = getWrongMemory();
+                    const localCoverage = getCoverage();
+                    const mergedWrong = mergeMemories(localWrong, remote.wrongMemory);
+                    const mergedCoverage = mergeCoverage(localCoverage, remote.coverage);
+                    saveWrongMemory(mergedWrong);
+                    saveCoverage(mergedCoverage);
+                    if (JSON.stringify(mergedWrong) !== JSON.stringify(remote.wrongMemory) ||
+                        JSON.stringify(mergedCoverage) !== JSON.stringify(remote.coverage)) {
+                        await patchGist(token, gistId, mergedWrong, mergedCoverage);
                     }
                 }
                 localStorage.setItem(SYNC_LAST_KEY, new Date().toISOString());
                 setSyncStatus('ok', `Synchronisiert ${formatSyncTime()}`);
                 updateWrongMemoryUI();
+                updateCoverageUI();
             } catch (err) {
                 console.error('Sync pull failed:', err);
                 setSyncStatus('err', 'Sync-Fehler: ' + err.message);
@@ -5084,10 +5107,10 @@
             try {
                 setSyncStatus('syncing', 'Sync läuft…');
                 if (!gistId) {
-                    gistId = await createGist(token, getWrongMemory());
+                    gistId = await createGist(token, getWrongMemory(), getCoverage());
                     localStorage.setItem(SYNC_GIST_ID_KEY, gistId);
                 } else {
-                    await patchGist(token, gistId, getWrongMemory());
+                    await patchGist(token, gistId, getWrongMemory(), getCoverage());
                 }
                 localStorage.setItem(SYNC_LAST_KEY, new Date().toISOString());
                 setSyncStatus('ok', `Synchronisiert ${formatSyncTime()}`);
