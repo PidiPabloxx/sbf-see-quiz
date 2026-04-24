@@ -610,7 +610,7 @@
             <!-- Start Screen -->
             <div id="start-screen" class="start-screen">
                 <h1>SBF See Quiz <span class="official-badge">ELWIS Offiziell</span></h1>
-                <p class="subtitle">Sportbootführerschein See - Basisfragen (Stand: 01.08.2023)</p>
+                <p class="subtitle">Sportbootführerschein See - Alle Fragen (Stand: 01.08.2023)</p>
 
                 <div class="stats">
                     <div class="stat-box">
@@ -644,6 +644,15 @@
                 </div>
 
                 <div class="category-select">
+                    <label>Prüfungsteil:</label>
+                    <select id="section-filter">
+                        <option value="all">Alle Fragen (1-285)</option>
+                        <option value="basis">Basisfragen (1-72)</option>
+                        <option value="see">Spezifische Fragen See (73-285)</option>
+                    </select>
+                </div>
+
+                <div class="category-select">
                     <label>Kategorie wählen:</label>
                     <select id="category-filter">
                         <option value="all">Alle Kategorien</option>
@@ -656,7 +665,7 @@
                         <option value="10">10 Fragen (Schnell)</option>
                         <option value="20">20 Fragen (Mittel)</option>
                         <option value="30" selected>30 Fragen (Prüfungsmodus)</option>
-                        <option value="0">Alle 72 Basisfragen</option>
+                        <option value="0">Alle Fragen im Filter</option>
                     </select>
                 </div>
 
@@ -4730,17 +4739,22 @@
         }
 
         function startUnseenFirst() {
-            const unseen = getUnseenQuestions();
+            const section = document.getElementById('section-filter').value;
+            let pool = [...questions];
+            if (section === 'basis') pool = pool.filter(q => q.number <= 72);
+            else if (section === 'see') pool = pool.filter(q => q.number >= 73);
+
             const coverage = getCoverage();
+            const unseen = pool.filter(q => !coverage[String(q.number)]);
 
             let selected;
             if (unseen.length > 0) {
                 // Unseen first, then weak (seen but not mastered), then mastered
-                const weak = questions.filter(q => {
+                const weak = pool.filter(q => {
                     const c = coverage[String(q.number)];
                     return c && c.correctStreak < MASTERED_STREAK;
                 });
-                const mastered = questions.filter(q => {
+                const mastered = pool.filter(q => {
                     const c = coverage[String(q.number)];
                     return c && c.correctStreak >= MASTERED_STREAK;
                 });
@@ -4865,13 +4879,22 @@
         }
 
         function startQuiz() {
+            const section = document.getElementById('section-filter').value;
             const category = document.getElementById('category-filter').value;
             const count = parseInt(document.getElementById('question-count').value);
 
-            // Filter questions
-            let filtered = category === 'all'
-                ? [...questions]
-                : questions.filter(q => q.category === category);
+            // Filter by section first (Basis vs See)
+            let filtered = [...questions];
+            if (section === 'basis') {
+                filtered = filtered.filter(q => q.number <= 72);
+            } else if (section === 'see') {
+                filtered = filtered.filter(q => q.number >= 73);
+            }
+
+            // Then filter by category
+            if (category !== 'all') {
+                filtered = filtered.filter(q => q.category === category);
+            }
 
             // Shuffle
             filtered = shuffleArray(filtered);
