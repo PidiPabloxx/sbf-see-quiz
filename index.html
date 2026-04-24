@@ -4699,9 +4699,17 @@
             if (typeof scheduleSync === 'function') scheduleSync();
         }
 
+        function getFilteredPool() {
+            const section = document.getElementById('section-filter').value;
+            let pool = [...questions];
+            if (section === 'basis') pool = pool.filter(q => q.number <= 72);
+            else if (section === 'see') pool = pool.filter(q => q.number >= 73);
+            return pool;
+        }
+
         function getUnseenQuestions() {
             const coverage = getCoverage();
-            return questions.filter(q => !coverage[String(q.number)]);
+            return getFilteredPool().filter(q => !coverage[String(q.number)]);
         }
 
         function getMasteredQuestions() {
@@ -4716,10 +4724,13 @@
 
         function updateCoverageUI() {
             const coverage = getCoverage();
-            const total = questions.length;
-            const seenKeys = Object.keys(coverage);
-            const seenCount = seenKeys.length;
-            const masteredCount = getMasteredQuestions().length;
+            const pool = getFilteredPool();
+            const total = pool.length;
+            const seenCount = pool.filter(q => coverage[String(q.number)]).length;
+            const masteredCount = pool.filter(q => {
+                const c = coverage[String(q.number)];
+                return c && c.correctStreak >= MASTERED_STREAK;
+            }).length;
             const unseenCount = total - seenCount;
 
             document.getElementById('coverage-count').textContent = `${seenCount}/${total} gesehen`;
@@ -4853,6 +4864,10 @@
             populateCategories();
             updateWrongMemoryUI();
             updateCoverageUI();
+            // Update coverage when section filter changes
+            document.getElementById('section-filter').addEventListener('change', () => {
+                updateCoverageUI();
+            });
             // Auto-sync from gist on load so unseen counts are accurate across devices
             if (typeof pullAndMerge === 'function') {
                 await pullAndMerge();
